@@ -13,7 +13,7 @@
 """IBMQBackend Test."""
 
 from inspect import getfullargspec
-from datetime import timedelta
+from datetime import timedelta, datetime
 import warnings
 from unittest import SkipTest
 
@@ -156,7 +156,7 @@ class TestIBMQBackend(IBMQTestCase):
         backend.set_options(qubit_lo_freq=[4.9e9, 5.0e9],
                             meas_lo_freq=[6.5e9, 6.6e9],
                             meas_level=2)
-        job = backend.run(get_pulse_schedule(backend), validate_qobj=True, meas_level=1, foo='foo')
+        job = backend.run(get_pulse_schedule(backend), meas_level=1, foo='foo')
         qobj = backend.retrieve_job(job.job_id()).qobj()  # Use retrieved Qobj.
         self.assertEqual(qobj.config.shots, 2048)
         # Qobj config freq is in GHz.
@@ -172,7 +172,7 @@ class TestIBMQBackend(IBMQTestCase):
         backend = provider.get_backend('ibmq_qasm_simulator')
         backend.options.shots = 2048
         backend.set_options(memory=True)
-        job = backend.run(ReferenceCircuits.bell(), validate_qobj=True, shots=1024, foo='foo')
+        job = backend.run(ReferenceCircuits.bell(), shots=1024, foo='foo')
         qobj = backend.retrieve_job(job.job_id()).qobj()
         self.assertEqual(qobj.config.shots, 1024)
         self.assertTrue(qobj.config.memory)
@@ -189,6 +189,7 @@ class TestIBMQBackendService(IBMQTestCase):
         """Initial class level setup."""
         # pylint: disable=arguments-differ
         cls.provider = provider
+        cls.last_week = datetime.now() - timedelta(days=7)
 
     def test_my_reservations(self):
         """Test my_reservations method"""
@@ -201,7 +202,7 @@ class TestIBMQBackendService(IBMQTestCase):
 
     def test_deprecated_service(self):
         """Test deprecated backend service module."""
-        ref_job = self.provider.backend.jobs(limit=1)[0]
+        ref_job = self.provider.backend.jobs(limit=1, start_datetime=self.last_week)[0]
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always", category=DeprecationWarning)
@@ -212,6 +213,6 @@ class TestIBMQBackendService(IBMQTestCase):
             warnings.simplefilter("always", category=DeprecationWarning)
             _ = self.provider.backends.ibmq_qasm_simulator
             self.provider.backends.retrieve_job(ref_job.job_id())
-            self.provider.backends.jobs(limit=1)
+            self.provider.backends.jobs(limit=1, start_datetime=self.last_week)
             self.provider.backends.my_reservations()
-            self.assertEqual(len(w), 1)
+            self.assertGreaterEqual(len(w), 1)

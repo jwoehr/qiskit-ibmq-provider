@@ -48,7 +48,8 @@ class TestIBMQJobAttributes(JobTestCase):
         cls.provider = provider
         cls.sim_backend = provider.get_backend('ibmq_qasm_simulator')
         cls.bell = transpile(ReferenceCircuits.bell(), cls.sim_backend)
-        cls.sim_job = cls.sim_backend.run(cls.bell, validate_qobj=True)
+        cls.sim_job = cls.sim_backend.run(cls.bell)
+        cls.last_week = datetime.now() - timedelta(days=7)
 
     def setUp(self):
         """Initial test setup."""
@@ -75,7 +76,7 @@ class TestIBMQJobAttributes(JobTestCase):
 
         job_properties = [None]
         large_qx = get_large_circuit(backend=backend)
-        job = backend.run(transpile(large_qx, backend=backend), validate_qobj=True)
+        job = backend.run(transpile(large_qx, backend=backend))
         job.wait_for_final_state(wait=None, callback=_job_callback)
         self.assertIsNotNone(job_properties[0])
 
@@ -83,23 +84,25 @@ class TestIBMQJobAttributes(JobTestCase):
         """Test using job names on a simulator."""
         # Use a unique job name
         job_name = str(time.time()).replace('.', '')
-        job = self.sim_backend.run(self.bell, job_name=job_name, validate_qobj=True)
+        job = self.sim_backend.run(self.bell, job_name=job_name)
         job_id = job.job_id()
         rjob = self.provider.backend.retrieve_job(job_id)
         self.assertEqual(rjob.name(), job_name)
 
         # Check using partial matching.
         job_name_partial = job_name[8:]
-        retrieved_jobs = self.provider.backend.jobs(backend_name=self.sim_backend.name(),
-                                                    job_name=job_name_partial)
+        retrieved_jobs = self.provider.backend.jobs(
+            backend_name=self.sim_backend.name(), job_name=job_name_partial,
+            start_datetime=self.last_week)
         self.assertGreaterEqual(len(retrieved_jobs), 1)
         retrieved_job_ids = {job.job_id() for job in retrieved_jobs}
         self.assertIn(job_id, retrieved_job_ids)
 
         # Check using regular expressions.
         job_name_regex = '^{}$'.format(job_name)
-        retrieved_jobs = self.provider.backend.jobs(backend_name=self.sim_backend.name(),
-                                                    job_name=job_name_regex)
+        retrieved_jobs = self.provider.backend.jobs(
+            backend_name=self.sim_backend.name(), job_name=job_name_regex,
+            start_datetime=self.last_week)
         self.assertEqual(len(retrieved_jobs), 1)
         self.assertEqual(job_id, retrieved_jobs[0].job_id())
 
@@ -107,7 +110,7 @@ class TestIBMQJobAttributes(JobTestCase):
         """Test changing the name associated with a job."""
         # Use a unique job name
         initial_job_name = str(time.time()).replace('.', '')
-        job = self.sim_backend.run(self.bell, job_name=initial_job_name, validate_qobj=True)
+        job = self.sim_backend.run(self.bell, job_name=initial_job_name)
 
         new_names_to_test = [
             '',  # empty string as name.
@@ -130,11 +133,12 @@ class TestIBMQJobAttributes(JobTestCase):
         job_name = str(time.time()).replace('.', '')
         job_ids = set()
         for _ in range(2):
-            job = self.sim_backend.run(self.bell, job_name=job_name, validate_qobj=True)
+            job = self.sim_backend.run(self.bell, job_name=job_name)
             job_ids.add(job.job_id())
 
-        retrieved_jobs = self.provider.backend.jobs(backend_name=self.sim_backend.name(),
-                                                    job_name=job_name)
+        retrieved_jobs = self.provider.backend.jobs(
+            backend_name=self.sim_backend.name(), job_name=job_name,
+            start_datetime=self.last_week)
 
         self.assertEqual(len(retrieved_jobs), 2,
                          "More than 2 jobs retrieved: {}".format(retrieved_jobs))
@@ -194,7 +198,8 @@ class TestIBMQJobAttributes(JobTestCase):
         if 'COMPLETED' not in self.sim_job.time_per_step():
             self.sim_job.refresh()
 
-        rjob = self.provider.backend.jobs(db_filter={'id': self.sim_job.job_id()})[0]
+        rjob = self.provider.backend.jobs(
+            db_filter={'id': self.sim_job.job_id()}, start_datetime=self.last_week)[0]
         self.assertFalse(rjob._time_per_step)
         rjob.refresh()
         self.assertEqual(rjob._time_per_step, self.sim_job._time_per_step)
@@ -203,7 +208,7 @@ class TestIBMQJobAttributes(JobTestCase):
         """Test retrieving creation date, while ensuring it is in local time."""
         # datetime, before running the job, in local time.
         start_datetime = datetime.now().replace(tzinfo=tz.tzlocal()) - timedelta(seconds=1)
-        job = self.sim_backend.run(self.bell, validate_qobj=True)
+        job = self.sim_backend.run(self.bell)
         job.result()
         # datetime, after the job is done running, in local time.
         end_datetime = datetime.now().replace(tzinfo=tz.tzlocal()) + timedelta(seconds=1)
@@ -217,7 +222,7 @@ class TestIBMQJobAttributes(JobTestCase):
         """Test retrieving time per step, while ensuring the date times are in local time."""
         # datetime, before running the job, in local time.
         start_datetime = datetime.now().replace(tzinfo=tz.tzlocal()) - timedelta(seconds=1)
-        job = self.sim_backend.run(self.bell, validate_qobj=True)
+        job = self.sim_backend.run(self.bell)
         job.result()
         # datetime, after the job is done running, in local time.
         end_datetime = datetime.now().replace(tzinfo=tz.tzlocal()) + timedelta(seconds=1)
@@ -229,7 +234,8 @@ class TestIBMQJobAttributes(JobTestCase):
                             'between the start date time {} and end date time {}'
                             .format(step, time_data, start_datetime, end_datetime))
 
-        rjob = self.provider.backend.jobs(db_filter={'id': job.job_id()})[0]
+        rjob = self.provider.backend.jobs(
+            db_filter={'id': job.job_id()}, start_datetime=self.last_week)[0]
         self.assertTrue(rjob.time_per_step())
 
     def test_new_job_attributes(self):
@@ -242,7 +248,7 @@ class TestIBMQJobAttributes(JobTestCase):
         original_submit = self.sim_backend._api_client.job_submit
         with mock.patch.object(AccountClient, 'job_submit',
                                side_effect=_mocked__api_job_submit):
-            job = self.sim_backend.run(self.bell, validate_qobj=True)
+            job = self.sim_backend.run(self.bell)
 
         self.assertEqual(job.batman_, 'bruce')
 
@@ -251,7 +257,7 @@ class TestIBMQJobAttributes(JobTestCase):
         # Find the most busy backend.
         backend = most_busy_backend(self.provider)
         leave_states = list(JOB_FINAL_STATES) + [JobStatus.RUNNING]
-        job = backend.run(self.bell, validate_qobj=True)
+        job = backend.run(self.bell)
         queue_info = None
         for _ in range(20):
             queue_info = job.queue_info()
@@ -284,13 +290,12 @@ class TestIBMQJobAttributes(JobTestCase):
     def test_invalid_job_share_level(self):
         """Test setting a non existent share level for a job."""
         with self.assertRaises(IBMQBackendValueError) as context_manager:
-            self.sim_backend.run(self.bell, job_share_level='invalid_job_share_level',
-                                 validate_qobj=True)
+            self.sim_backend.run(self.bell, job_share_level='invalid_job_share_level')
         self.assertIn('not a valid job share', context_manager.exception.message)
 
     def test_share_job_in_project(self):
         """Test successfully sharing a job within a shareable project."""
-        job = self.sim_backend.run(self.bell, job_share_level='project', validate_qobj=True)
+        job = self.sim_backend.run(self.bell, job_share_level='project')
 
         retrieved_job = self.sim_backend.retrieve_job(job.job_id())
         self.assertEqual(retrieved_job.share_level(), 'project',
@@ -300,9 +305,10 @@ class TestIBMQJobAttributes(JobTestCase):
         """Test using job tags with an or operator."""
         # Use a unique tag.
         job_tags = [uuid.uuid4().hex, uuid.uuid4().hex, uuid.uuid4().hex]
-        job = self.sim_backend.run(self.bell, job_tags=job_tags, validate_qobj=True)
+        job = self.sim_backend.run(self.bell, job_tags=job_tags)
 
-        rjobs = self.sim_backend.jobs(job_tags=['phantom_tag'])
+        rjobs = self.sim_backend.jobs(
+            job_tags=['phantom_tag'], start_datetime=self.last_week)
         self.assertEqual(len(rjobs), 0,
                          "Expected job {}, got {}".format(job.job_id(), rjobs))
 
@@ -310,7 +316,7 @@ class TestIBMQJobAttributes(JobTestCase):
         tags_to_check = [job_tags, job_tags[1:2], job_tags[0:1]+['phantom_tag']]
         for tags in tags_to_check:
             with self.subTest(tags=tags):
-                rjobs = self.sim_backend.jobs(job_tags=tags)
+                rjobs = self.sim_backend.jobs(job_tags=tags, start_datetime=self.last_week)
                 self.assertEqual(len(rjobs), 1,
                                  "Expected job {}, got {}".format(job.job_id(), rjobs))
                 self.assertEqual(rjobs[0].job_id(), job.job_id())
@@ -320,18 +326,20 @@ class TestIBMQJobAttributes(JobTestCase):
         """Test using job tags with an and operator."""
         # Use a unique tag.
         job_tags = [uuid.uuid4().hex, uuid.uuid4().hex, uuid.uuid4().hex]
-        job = self.sim_backend.run(self.bell, job_tags=job_tags, validate_qobj=True)
+        job = self.sim_backend.run(self.bell, job_tags=job_tags)
 
         no_rjobs_tags = [job_tags[0:1]+['phantom_tags'], ['phantom_tag']]
         for tags in no_rjobs_tags:
-            rjobs = self.sim_backend.jobs(job_tags=tags, job_tags_operator="AND")
+            rjobs = self.sim_backend.jobs(
+                job_tags=tags, job_tags_operator="AND", start_datetime=self.last_week)
             self.assertEqual(len(rjobs), 0,
                              "Expected job {}, got {}".format(job.job_id(), rjobs))
 
         has_rjobs_tags = [job_tags, job_tags[1:3]]
         for tags in has_rjobs_tags:
             with self.subTest(tags=tags):
-                rjobs = self.sim_backend.jobs(job_tags=tags, job_tags_operator="AND")
+                rjobs = self.sim_backend.jobs(
+                    job_tags=tags, job_tags_operator="AND", start_datetime=self.last_week)
                 self.assertEqual(len(rjobs), 1,
                                  "Expected job {}, got {}".format(job.job_id(), rjobs))
                 self.assertEqual(rjobs[0].job_id(), job.job_id())
@@ -340,7 +348,7 @@ class TestIBMQJobAttributes(JobTestCase):
     def test_job_tags_replace(self):
         """Test updating job tags by replacing a job's existing tags."""
         initial_job_tags = [uuid.uuid4().hex]
-        job = self.sim_backend.run(self.bell, job_tags=initial_job_tags, validate_qobj=True)
+        job = self.sim_backend.run(self.bell, job_tags=initial_job_tags)
 
         tags_to_replace_subtests = [
             [],  # empty tags.
@@ -355,7 +363,7 @@ class TestIBMQJobAttributes(JobTestCase):
     def test_job_tags_add(self):
         """Test updating job tags by adding to a job's existing tags."""
         initial_job_tags = [uuid.uuid4().hex]
-        job = self.sim_backend.run(self.bell, job_tags=initial_job_tags, validate_qobj=True)
+        job = self.sim_backend.run(self.bell, job_tags=initial_job_tags)
 
         tags_to_add_subtests = [
             [],  # empty tags.
@@ -370,7 +378,7 @@ class TestIBMQJobAttributes(JobTestCase):
     def test_job_tags_remove(self):
         """Test updating job tags by removing from a job's existing tags."""
         initial_job_tags = [uuid.uuid4().hex, uuid.uuid4().hex, uuid.uuid4().hex]
-        job = self.sim_backend.run(self.bell, job_tags=initial_job_tags, validate_qobj=True)
+        job = self.sim_backend.run(self.bell, job_tags=initial_job_tags)
 
         tags_to_remove_subtests = [
             [],
@@ -393,7 +401,7 @@ class TestIBMQJobAttributes(JobTestCase):
 
     def test_job_tags_replace_and_remove(self):
         """Test updating job tags by replacing and removing tags."""
-        job = self.sim_backend.run(self.bell, job_tags=[uuid.uuid4().hex], validate_qobj=True)
+        job = self.sim_backend.run(self.bell, job_tags=[uuid.uuid4().hex])
 
         replacement_tags = [uuid.uuid4().hex, uuid.uuid4().hex]
         # Remove the first tag in `replacement_tags`
@@ -408,7 +416,7 @@ class TestIBMQJobAttributes(JobTestCase):
 
     def test_job_tags_all_parameters(self):
         """Test updating job tags by replacing, adding, and removing tags."""
-        job = self.sim_backend.run(self.bell, job_tags=[uuid.uuid4().hex], validate_qobj=True)
+        job = self.sim_backend.run(self.bell, job_tags=[uuid.uuid4().hex])
 
         replacement_tags = [uuid.uuid4().hex, uuid.uuid4().hex]
         additional_tags = [uuid.uuid4().hex, uuid.uuid4().hex]
